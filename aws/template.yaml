@@ -1,0 +1,300 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  ShareKind - Smart Donation & Community Support Platform
+  Serverless backend with AWS Lambda, API Gateway, DynamoDB, Cognito, S3, and CloudWatch.
+
+Globals:
+  Function:
+    Timeout: 30
+    MemorySize: 256
+    Runtime: python3.10
+    Environment:
+      Variables:
+        STAGE: !Ref Stage
+        TABLE_NAME: !Ref ShareKindDynamoDBTable
+        ANALYTICS_BUCKET: !Ref ShareKindAnalyticsBucket
+        COGNITO_USER_POOL_ID: !Ref ShareKindUserPool
+        COGNITO_CLIENT_ID: !Ref ShareKindUserPoolClient
+
+Parameters:
+  Stage:
+    Type: String
+    Default: dev
+    AllowedValues: [dev, staging, prod]
+    Description: Deployment stage environment
+
+Resources:
+  # ==========================================
+  # AMAZON COGNITO: User Authentication & RBAC
+  # ==========================================
+  ShareKindUserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      UserPoolName: !Sub sharekind-user-pool-${Stage}
+      UsernameAttributes:
+        - email
+      AutoVerifiedAttributes:
+        - email
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 8
+          RequireUppercase: true
+          RequireLowercase: true
+          RequireNumbers: true
+          RequireSymbols: false
+      Schema:
+        - Name: role
+          AttributeDataType: String
+          Mutable: true
+        - Name: organization_name
+          AttributeDataType: String
+          Mutable: true
+
+  ShareKindUserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      ClientName: !Sub sharekind-client-${Stage}
+      UserPoolId: !Ref ShareKindUserPool
+      GenerateSecret: false
+      ExplicitAuthFlows:
+        - ALLOW_USER_SRP_AUTH
+        - ALLOW_REFRESH_TOKEN_AUTH
+        - ALLOW_USER_PASSWORD_AUTH
+
+  # ==========================================
+  # AMAZON DYNAMODB: Single-Table Architecture
+  # ==========================================
+  ShareKindDynamoDBTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub sharekind-core-${Stage}
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: PK
+          AttributeType: S
+        - AttributeName: SK
+          AttributeType: S
+        - AttributeName: GSI1PK
+          AttributeType: S
+        - AttributeName: GSI1SK
+          AttributeType: S
+        - AttributeName: EntityType
+          AttributeType: S
+      KeySchema:
+        - AttributeName: PK
+          KeyType: HASH
+        - AttributeName: SK
+          KeyType: RANGE
+      GlobalSecondaryIndexes:
+        - IndexName: GSI1
+          KeySchema:
+            - AttributeName: GSI1PK
+              KeyType: HASH
+            - AttributeName: GSI1SK
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+        - IndexName: EntityTypeIndex
+          KeySchema:
+            - AttributeName: EntityType
+              KeyType: HASH
+            - AttributeName: SK
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      SSESpecification:
+        SSEEnabled: true
+
+  # ==========================================
+  # AMAZON S3: Document Storage & Analytics Lake
+  # ==========================================
+  ShareKindAnalyticsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub sharekind-analytics-${AWS::AccountId}-${Stage}
+      VersioningConfiguration:
+        Status: Enabled
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+  # ==========================================
+  # AMAZON API GATEWAY
+  # ==========================================
+  ShareKindApi:
+    Type: AWS::Serverless::Api
+    Properties:
+      StageName: !Ref Stage
+      Cors:
+        AllowMethods: "'GET,POST,PUT,DELETE,OPTIONS'"
+        AllowHeaders: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token,X-User-Role'"
+        AllowOrigin: "'*'"
+
+  # ==========================================
+  # AWS LAMBDA FUNCTIONS
+  # ==========================================
+  DonationsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ../backend/lambdas/
+      Handler: donations_handler.lambda_handler
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref ShareKindDynamoDBTable
+      Events:
+        GetDonations:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ShareKindApi
+            Path: /api/donations
+            Method: GET
+        CreateDonation:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ShareKindApi
+            Path: /api/donations
+            Method: POST
+
+  NeedsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ../backend/lambdas/
+      Handler: needs_handler.lambda_handler
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref ShareKindDynamoDBTable
+      Events:
+        GetNeeds:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ShareKindApi
+            Path: /api/needs
+            Method: GET
+        CreateNeed:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ShareKindApi
+            Path: /api/needs
+            Method: POST
+
+  SuppliersFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ../backend/lambdas/
+      Handler: suppliers_handler.lambda_handler
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref ShareKindDynamoDBTable
+      Events:
+        GetSuppliers:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ShareKindApi
+            Path: /api/suppliers
+            Method: GET
+        CompareSuppliers:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ShareKindApi
+            Path: /api/suppliers/compare
+            Method: POST
+
+  ProcurementFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ../backend/lambdas/
+      Handler: procurement_handler.lambda_handler
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref ShareKindDynamoDBTable
+      Events:
+        GetOrders:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ShareKindApi
+            Path: /api/orders
+            Method: GET
+        CreateOrder:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ShareKindApi
+            Path: /api/orders
+            Method: POST
+        UpdateOrderStatus:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ShareKindApi
+            Path: /api/orders/{id}/status
+            Method: PUT
+
+  AnalyticsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ../backend/lambdas/
+      Handler: analytics_handler.lambda_handler
+      Policies:
+        - DynamoDBReadPolicy:
+            TableName: !Ref ShareKindDynamoDBTable
+        - S3CrudPolicy:
+            BucketName: !Ref ShareKindAnalyticsBucket
+      Events:
+        GetAnalytics:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ShareKindApi
+            Path: /api/analytics
+            Method: GET
+        ExportS3:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ShareKindApi
+            Path: /api/analytics/export
+            Method: POST
+
+  AdminFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ../backend/lambdas/
+      Handler: admin_handler.lambda_handler
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref ShareKindDynamoDBTable
+      Events:
+        GetAuditLogs:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ShareKindApi
+            Path: /api/admin/audit-logs
+            Method: GET
+        VerifyEntity:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ShareKindApi
+            Path: /api/admin/verify
+            Method: POST
+
+Outputs:
+  ApiEndpoint:
+    Description: Base URL for API Gateway
+    Value: !Sub "https://${ShareKindApi}.execute-api.${AWS::Region}.amazonaws.com/${Stage}"
+  UserPoolId:
+    Description: Cognito User Pool ID
+    Value: !Ref ShareKindUserPool
+  UserPoolClientId:
+    Description: Cognito App Client ID
+    Value: !Ref ShareKindUserPoolClient
+  DynamoDBTableName:
+    Description: Main DynamoDB Table Name
+    Value: !Ref ShareKindDynamoDBTable
+  AnalyticsBucketName:
+    Description: S3 Bucket for Analytics Data
+    Value: !Ref ShareKindAnalyticsBucket

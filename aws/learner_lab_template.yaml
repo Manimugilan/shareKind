@@ -1,0 +1,200 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  ShareKind Platform - AWS Academy Learner Lab Tailored CloudFormation Template.
+  Deploys EC2 Backend Server, S3 Static Web Server, DynamoDB, Lambda, and CloudWatch.
+  COMPLIANCE NOTE: Strictly uses pre-created 'LabRole' and 'LabInstanceProfile' to prevent
+  'iam:CreateRole' permission errors common in restricted Learner Lab accounts.
+
+Parameters:
+  EnvironmentName:
+    Type: String
+    Default: dev
+    Description: Environment stage name
+
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: Select your Learner Lab Default VPC
+
+  SubnetId:
+    Type: AWS::EC2::Subnet::Id
+    Description: Select a Public Subnet in your Default VPC
+
+Resources:
+  # ========================================================
+  # 1. AMAZON DYNAMODB: Core Platform Single-Table
+  # ========================================================
+  ShareKindDynamoTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub sharekind-core-${EnvironmentName}
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: PK
+          AttributeType: S
+        - AttributeName: SK
+          AttributeType: S
+      KeySchema:
+        - AttributeName: PK
+          KeyType: HASH
+        - AttributeName: SK
+          KeyType: RANGE
+
+  # ========================================================
+  # 2. AMAZON S3: Public Web Server (Static Website Hosting)
+  # ========================================================
+  FrontendWebBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub sharekind-frontend-${AWS::AccountId}-${EnvironmentName}
+      WebsiteConfiguration:
+        IndexDocument: index.html
+        ErrorDocument: index.html
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: false
+        BlockPublicPolicy: false
+        IgnorePublicAcls: false
+        RestrictPublicBuckets: false
+
+  FrontendBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref FrontendWebBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: PublicReadGetObject
+            Effect: Allow
+            Principal: '*'
+            Action: 's3:GetObject'
+            Resource: !Sub 'arn:aws:s3:::${FrontendWebBucket}/*'
+
+  # ========================================================
+  # 3. AMAZON S3: Analytics Lake Bucket
+  # ========================================================
+  AnalyticsDataLakeBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub sharekind-analytics-${AWS::AccountId}-${EnvironmentName}
+      VersioningConfiguration:
+        Status: Enabled
+
+  # ========================================================
+  # 4. AMAZON EC2 SECURITY GROUP: Web & API Traffic
+  # ========================================================
+  WebServerSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Enable HTTP and API Gateway access to ShareKind backend
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 8000
+          ToPort: 8000
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+
+  # ========================================================
+  # 5. AMAZON EC2 SERVER: FastAPI Backend & AI Engine Server
+  # ========================================================
+  BackendEc2Server:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t2.micro
+      ImageId: ami-0c101f26f147fa7fd # Amazon Linux 2023 in us-east-1
+      IamInstanceProfile: LabInstanceProfile # Pre-created in Learner Lab!
+      SecurityGroupIds:
+        - !Ref WebServerSecurityGroup
+      SubnetId: !Ref SubnetId
+      Tags:
+        - Key: Name
+          Value: !Sub ShareKind-Backend-Server-${EnvironmentName}
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          yum update -y
+          yum install -y python3 python3-pip git
+          
+          # Setup workspace
+          mkdir -p /opt/sharekind
+          cd /opt/sharekind
+          
+          # Create systemd service for FastAPI
+          cat << 'EOF' > /opt/sharekind/server.py
+          import uvicorn
+          from fastapi import FastAPI
+          from fastapi.middleware.cors import CORSMiddleware
+          
+          app = FastAPI(title="ShareKind Cloud API Gateway")
+          app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+          
+          @app.get("/health")
+          def health():
+              return {"status": "healthy", "cloud": "AWS Learner Lab EC2 Instance", "dynamo": "sharekind-core-dev"}
+          
+          if __name__ == "__main__":
+              uvicorn.run(app, host="0.0.0.0", port=8000)
+          EOF
+
+          pip3 install fastapi uvicorn boto3
+          nohup python3 /opt/sharekind/server.py > /var/log/sharekind.log 2>&1 &
+
+  # ========================================================
+  # 6. AWS LAMBDA SERVERLESS FUNCTION (Uses LabRole)
+  # ========================================================
+  CoreDonationsLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub sharekind-donations-${EnvironmentName}
+      Runtime: python3.10
+      Role: !Sub "arn:aws:iam://${AWS::AccountId}:role/LabRole" # Pre-created LabRole!
+      Handler: index.lambda_handler
+      Timeout: 15
+      Code:
+        ZipFile: |
+          import json
+          def lambda_handler(event, context):
+              return {
+                  "statusCode": 200,
+                  "headers": {"Content-Type": "application/json", "Access-Control-Allow-Origin": "*"},
+                  "body": json.dumps({
+                      "message": "ShareKind AWS Lambda Microservice running successfully in Learner Lab!",
+                      "status": "healthy"
+                  })
+              }
+
+  # ========================================================
+  # 7. AMAZON CLOUDWATCH LOG GROUP
+  # ========================================================
+  PlatformCloudWatchLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/sharekind/${EnvironmentName}
+      RetentionInDays: 7
+
+Outputs:
+  FrontendWebsiteUrl:
+    Description: Public S3 Static Web URL for ShareKind Frontend
+    Value: !GetAtt FrontendWebBucket.WebsiteURL
+
+  BackendEc2PublicIp:
+    Description: Public IP of the dedicated Backend Server
+    Value: !GetAtt BackendEc2Server.PublicIp
+
+  BackendApiUrl:
+    Description: Direct REST API URL on the EC2 Server
+    Value: !Sub "http://${BackendEc2Server.PublicIp}:8000"
+
+  DynamoDBTableName:
+    Description: DynamoDB Core Table
+    Value: !Ref ShareKindDynamoTable
+
+  AnalyticsBucketName:
+    Description: S3 Analytics Data Lake Bucket
+    Value: !Ref AnalyticsDataLakeBucket

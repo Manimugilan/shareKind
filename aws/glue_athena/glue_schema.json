@@ -1,0 +1,85 @@
+{
+  "DatabaseName": "sharekind_analytics_db",
+  "Tables": [
+    {
+      "Name": "donations",
+      "Description": "Aggregated donor contribution records for analytical reporting",
+      "StorageDescriptor": {
+        "Columns": [
+          {"Name": "donation_id", "Type": "string"},
+          {"Name": "donor_id", "Type": "string"},
+          {"Name": "category", "Type": "string"},
+          {"Name": "amount", "Type": "double"},
+          {"Name": "currency", "Type": "string"},
+          {"Name": "ngo_id", "Type": "string"},
+          {"Name": "ngo_name", "Type": "string"},
+          {"Name": "status", "Type": "string"},
+          {"Name": "payment_ref", "Type": "string"},
+          {"Name": "is_demo", "Type": "boolean"},
+          {"Name": "created_at", "Type": "timestamp"}
+        ],
+        "Location": "s3://sharekind-analytics-lake/donations/",
+        "InputFormat": "org.apache.hadoop.mapred.TextInputFormat",
+        "OutputFormat": "org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat",
+        "SerdeInfo": {
+          "SerializationLibrary": "org.openx.data.jsonserde.JsonSerDe"
+        }
+      }
+    },
+    {
+      "Name": "procurement_orders",
+      "Description": "Procurement orders placed with suppliers and delivery tracking",
+      "StorageDescriptor": {
+        "Columns": [
+          {"Name": "order_id", "Type": "string"},
+          {"Name": "need_id", "Type": "string"},
+          {"Name": "ngo_id", "Type": "string"},
+          {"Name": "supplier_id", "Type": "string"},
+          {"Name": "supplier_name", "Type": "string"},
+          {"Name": "item_category", "Type": "string"},
+          {"Name": "quantity", "Type": "int"},
+          {"Name": "unit_price", "Type": "double"},
+          {"Name": "delivery_fee", "Type": "double"},
+          {"Name": "total_cost", "Type": "double"},
+          {"Name": "status", "Type": "string"},
+          {"Name": "is_demo", "Type": "boolean"},
+          {"Name": "dispatched_at", "Type": "timestamp"},
+          {"Name": "delivered_at", "Type": "timestamp"},
+          {"Name": "created_at", "Type": "timestamp"}
+        ],
+        "Location": "s3://sharekind-analytics-lake/procurement_orders/",
+        "InputFormat": "org.apache.hadoop.mapred.TextInputFormat",
+        "OutputFormat": "org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat",
+        "SerdeInfo": {
+          "SerializationLibrary": "org.openx.data.jsonserde.JsonSerDe"
+        }
+      }
+    },
+    {
+      "Name": "ngo_needs",
+      "Description": "Needs and requirements published by verified NGOs",
+      "StorageDescriptor": {
+        "Columns": [
+          {"Name": "need_id", "Type": "string"},
+          {"Name": "ngo_id", "Type": "string"},
+          {"Name": "ngo_name", "Type": "string"},
+          {"Name": "category", "Type": "string"},
+          {"Name": "title", "Type": "string"},
+          {"Name": "target_quantity", "Type": "int"},
+          {"Name": "allocated_quantity", "Type": "int"},
+          {"Name": "budget_estimate", "Type": "double"},
+          {"Name": "urgency", "Type": "string"},
+          {"Name": "status", "Type": "string"},
+          {"Name": "location", "Type": "string"},
+          {"Name": "created_at", "Type": "timestamp"}
+        ],
+        "Location": "s3://sharekind-analytics-lake/ngo_needs/",
+        "InputFormat": "org.apache.hadoop.mapred.TextInputFormat",
+        "OutputFormat": "org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat",
+        "SerdeInfo": {
+          "SerializationLibrary": "org.openx.data.jsonserde.JsonSerDe"
+        }
+      }
+    }
+  ]
+}

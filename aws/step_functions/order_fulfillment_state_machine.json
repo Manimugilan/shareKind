@@ -1,0 +1,101 @@
+{
+  "Comment": "ShareKind Cloud Platform - Order Procurement and Fulfillment State Machine (AWS Step Functions)",
+  "StartAt": "ValidateOrderInput",
+  "States": {
+    "ValidateOrderInput": {
+      "Type": "Task",
+      "Resource": "arn:aws:lambda:us-east-1:438787411234:function:OrderInventoryValidation",
+      "Comment": "Validates incoming procurement order request against NGO budget and requirements",
+      "Retry": [
+        {
+          "ErrorEquals": ["States.Timeout", "Lambda.ServiceException"],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 3,
+          "BackoffRate": 2.0
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "OrderValidationFailed",
+          "ResultPath": "$.error"
+        }
+      ],
+      "Next": "CheckSupplierInventory"
+    },
+    "CheckSupplierInventory": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.inventory_available",
+          "BooleanEquals": true,
+          "Next": "AuthorizeDonationFunds"
+        }
+      ],
+      "Default": "SupplierOutOfStock"
+    },
+    "AuthorizeDonationFunds": {
+      "Type": "Task",
+      "Resource": "arn:aws:lambda:us-east-1:438787411234:function:OrderPaymentVerification",
+      "Comment": "Verifies donor allocation and earmarks simulated funds for procurement",
+      "Retry": [
+        {
+          "ErrorEquals": ["Lambda.ServiceException"],
+          "IntervalSeconds": 3,
+          "MaxAttempts": 2,
+          "BackoffRate": 1.5
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "PaymentAuthorizationFailed",
+          "ResultPath": "$.error"
+        }
+      ],
+      "Next": "NotifySupplierForAcceptance"
+    },
+    "NotifySupplierForAcceptance": {
+      "Type": "Task",
+      "Resource": "arn:aws:lambda:us-east-1:438787411234:function:OrderShippingApproval",
+      "Comment": "Transmits procurement quote and order specification to supplier fulfillment portal",
+      "Next": "WaitForSupplierConfirmation"
+    },
+    "WaitForSupplierConfirmation": {
+      "Type": "Wait",
+      "Seconds": 5,
+      "Next": "ProcessDispatchLogistics"
+    },
+    "ProcessDispatchLogistics": {
+      "Type": "Task",
+      "Resource": "arn:aws:lambda:us-east-1:438787411234:function:OrderShippingApproval",
+      "Comment": "Updates delivery carrier tracking and generates verifiable bill of lading",
+      "Next": "NotifyBeneficiaryNGO"
+    },
+    "NotifyBeneficiaryNGO": {
+      "Type": "Task",
+      "Resource": "arn:aws:lambda:us-east-1:438787411234:function:OrderCustomerNotification",
+      "Comment": "Sends real-time notification to NGO director with ETA and verification code",
+      "Next": "OrderFulfillmentSuccess"
+    },
+    "OrderFulfillmentSuccess": {
+      "Type": "Succeed",
+      "Comment": "Procurement order successfully validated, funded, dispatched, and confirmed."
+    },
+    "SupplierOutOfStock": {
+      "Type": "Fail",
+      "Error": "SUPPLIER_OUT_OF_STOCK",
+      "Cause": "Selected supplier does not have sufficient capacity to fulfill requested quantity."
+    },
+    "PaymentAuthorizationFailed": {
+      "Type": "Fail",
+      "Error": "PAYMENT_AUTH_FAILED",
+      "Cause": "Donation fund earmarking could not be validated."
+    },
+    "OrderValidationFailed": {
+      "Type": "Fail",
+      "Error": "INVALID_ORDER_SPECIFICATION",
+      "Cause": "Order failed input schema validation or budget constraints."
+    }
+  }
+}
